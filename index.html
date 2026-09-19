@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Arena Buttons</title>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e;
+          --green:#238636; --red:#b62324; --blue:#1f6feb; --amber:#9e6a03; }
+  * { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+  body { background:var(--bg); color:var(--fg); font-family:-apple-system,system-ui,sans-serif;
+         padding:10px; max-width:520px; margin:0 auto; user-select:none; }
+  h1 { font-size:16px; color:var(--dim); text-align:center; margin:4px 0 10px; font-weight:600; }
+  .status { text-align:center; padding:10px; border-radius:10px; font-size:20px; font-weight:700;
+            margin-bottom:10px; background:var(--panel); border:1px solid var(--line); }
+  .status.armed { background:#1a2f1a; border-color:var(--green); color:#3fb950; }
+  .maps { display:grid; grid-template-columns:repeat(6,1fr); gap:6px; margin-bottom:10px; }
+  .maps button { padding:14px 0; font-size:16px; font-weight:700; border-radius:8px;
+                 border:1px solid var(--line); background:var(--panel); color:var(--dim); }
+  .maps button.sel { background:var(--blue); color:#fff; border-color:var(--blue); }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px; }
+  .big { min-height:92px; font-size:30px; font-weight:800; border-radius:12px; border:none; color:#fff; }
+  .arm { background:var(--green); }
+  .disarm { background:var(--red); }
+  .plus { background:var(--blue); }
+  .minus { background:var(--amber); }
+  button:disabled { opacity:0.25; }
+  button:active:not(:disabled) { filter:brightness(1.35); }
+  .small { min-height:48px; font-size:15px; font-weight:600; border-radius:8px;
+           border:1px solid var(--line); background:var(--panel); color:var(--fg); }
+  #log { margin-top:10px; font-family:ui-monospace,monospace; font-size:13px; color:var(--dim);
+         background:var(--panel); border:1px solid var(--line); border-radius:8px;
+         padding:8px; min-height:110px; white-space:pre-wrap; }
+  #log .ok { color:#3fb950; } #log .err { color:#f85149; font-weight:700; }
+  #settings { display:none; margin-top:10px; background:var(--panel); border:1px solid var(--line);
+              border-radius:8px; padding:10px; }
+  #settings input { width:100%; padding:10px; margin:4px 0 8px; border-radius:6px;
+                    border:1px solid var(--line); background:var(--bg); color:var(--fg); font-size:15px; }
+  #settings label { font-size:12px; color:var(--dim); }
+  .banner { text-align:center; font-size:12px; color:var(--dim); margin-bottom:8px; }
+</style>
+</head>
+<body>
+<h1>C9 vs LYON &mdash; PoV C9 &mdash; 26SEP19 &mdash; SHADOW</h1>
+<div class="banner" id="pingbar">ping: &ndash;</div>
+<div class="status" id="status">DISARMED</div>
+
+<div class="maps" id="maps"></div>
+
+<div class="row">
+  <button class="big arm" id="armBtn" onclick="doArm()">ARM</button>
+  <button class="big disarm" id="disarmBtn" onclick="send('disarm')" disabled>DISARM</button>
+</div>
+<div class="row">
+  <button class="big plus" id="p5" onclick="send('+5')" disabled>+5&cent;</button>
+  <button class="big plus" id="p10" onclick="send('+10')" disabled>+10&cent;</button>
+</div>
+<div class="row">
+  <button class="big minus" id="m5" onclick="send('-5')" disabled>&minus;5&cent;</button>
+  <button class="big minus" id="m10" onclick="send('-10')" disabled>&minus;10&cent;</button>
+</div>
+<div class="row">
+  <button class="small" onclick="ping(true)">PING</button>
+  <button class="small" onclick="toggleSettings()">SETTINGS</button>
+</div>
+
+<div id="log">ready</div>
+
+<div id="settings">
+  <label>GitHub owner (username)</label><input id="s_owner" autocapitalize="none">
+  <label>Private data repo name</label><input id="s_repo" autocapitalize="none">
+  <label>Fine-grained token (contents read/write)</label><input id="s_token" type="password" autocapitalize="none">
+  <div class="row"><button class="small" onclick="saveSettings()">SAVE</button>
+  <button class="small" onclick="ping(true)">TEST CONNECTION</button></div>
+</div>
+
+<script>
+"use strict";
+var STEM = "26SEP191600C9LY";
+var MAPS = ["1","2","3","4","5","S"];
+var sel = "1", armed = false, armedTs = null, seq = 0, pings = [], cfg = {};
+
+function lsGet(k){ try { return localStorage.getItem(k); } catch(e){ return null; } }
+function lsSet(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+
+function init(){
+  try { cfg = JSON.parse(lsGet("arena_gh") || "{}"); } catch(e){ cfg = {}; }
+  var m = document.getElementById("maps");
+  MAPS.forEach(function(x){
+    var b = document.createElement("button");
+    b.textContent = (x === "S" ? "SER" : "M" + x);
+    b.id = "map_" + x;
+    b.onclick = function(){ selectMap(x); };
+    m.appendChild(b);
+  });
+  selectMap("1");
+  if (!cfg.owner || !cfg.repo || !cfg.token) {
+    toggleSettings();
+    logLine("enter GitHub settings first", "err");
+  } else {
+    document.getElementById("s_owner").value = cfg.owner;
+    document.getElementById("s_repo").value = cfg.repo;
+    ping(false);
+  }
+  setInterval(function(){ if (!document.hidden && cfg.token) ping(false); }, 60000);
+  setInterval(updateStatus, 500);
+}
+
+function selectMap(x){
+  if (armed) { buzz(80); logLine("disarm before switching maps", "err"); return; }
+  sel = x;
+  MAPS.forEach(function(y){
+    document.getElementById("map_" + y).className = (y === sel ? "sel" : "");
+  });
+}
+
+function updateStatus(){
+  var s = document.getElementById("status");
+  if (armed) {
+    var dt = ((Date.now() - armedTs) / 1000).toFixed(0);
+    s.textContent = "ARMED " + (sel === "S" ? "SERIES" : "MAP " + sel) + "  t+" + dt + "s";
+    s.className = "status armed";
+  } else {
+    s.textContent = "DISARMED";
+    s.className = "status";
+  }
+}
+
+function setArmed(a){
+  armed = a;
+  if (!a) armedTs = null;
+  ["disarmBtn","p5","p10","m5","m10"].forEach(function(id){
+    document.getElementById(id).disabled = !a;
+  });
+  document.getElementById("armBtn").disabled = a;
+}
+
+function doArm(){
+  armedTs = Date.now();
+  setArmed(true);
+  send("arm");
+}
+
+function buzz(ms){ if (navigator.vibrate) navigator.vibrate(ms); }
+
+function logLine(msg, cls){
+  var el = document.getElementById("log");
+  var t = new Date().toTimeString().slice(0,8);
+  el.innerHTML = '<div class="' + (cls||"") + '">' + t + "  " + msg + "</div>" + el.innerHTML;
+  var kids = el.children;
+  while (kids.length > 8) el.removeChild(el.lastChild);
+}
+
+function ghHeaders(){
+  return { "Authorization": "Bearer " + cfg.token,
+           "Accept": "application/vnd.github+json",
+           "Content-Type": "application/json" };
+}
+
+function send(action){
+  buzz(40);
+  if (!cfg.token) { logLine("no settings", "err"); return; }
+  if (action === "disarm") setArmed(false);
+  var ts = Date.now();
+  seq += 1;
+  var safe = action.replace("+", "p").replace("-", "m");
+  var path = "events/" + ts + "_" + safe + "_" + sel + ".json";
+  var payload = { app_ts_ms: ts, action: action, map: sel, match: STEM,
+                  armed_ts_ms: armedTs, seq: seq, pings_ms: pings.slice(-5) };
+  var body = JSON.stringify({ message: action + " " + sel,
+    content: btoa(JSON.stringify(payload)) });
+  var label = action + " " + (sel === "S" ? "SER" : "M" + sel);
+  putWithRetry(path, body, label, ts, 0);
+}
+
+function putWithRetry(path, body, label, t0, attempt){
+  fetch("https://api.github.com/repos/" + cfg.owner + "/" + cfg.repo + "/contents/" + path,
+        { method: "PUT", headers: ghHeaders(), body: body })
+  .then(function(r){
+    var rtt = Date.now() - t0;
+    if (r.status === 201 || r.status === 200) {
+      logLine(label + " &#10003; " + rtt + "ms", "ok"); buzz(15);
+    } else {
+      throw new Error("HTTP " + r.status);
+    }
+  })
+  .catch(function(e){
+    if (attempt < 3) {
+      logLine(label + " retry " + (attempt+1) + " (" + e.message + ")", "err");
+      setTimeout(function(){ putWithRetry(path, body, label, t0, attempt+1); }, 350);
+    } else {
+      logLine(label + " FAILED: " + e.message, "err"); buzz([120,60,120]);
+    }
+  });
+}
+
+function ping(manual){
+  var t0 = Date.now();
+  fetch("https://api.github.com/rate_limit", { headers: { "Authorization": "Bearer " + cfg.token } })
+  .then(function(r){
+    var rtt = Date.now() - t0;
+    pings.push(rtt);
+    if (pings.length > 20) pings.shift();
+    var med = pings.slice().sort(function(a,b){return a-b;})[Math.floor(pings.length/2)];
+    document.getElementById("pingbar").textContent =
+      "ping: " + rtt + "ms (med " + med + "ms, n=" + pings.length + ")" + (r.ok ? "" : " AUTH?");
+    if (manual) logLine("ping " + rtt + "ms" + (r.ok ? "" : " (bad token?)"), r.ok ? "ok" : "err");
+  })
+  .catch(function(e){
+    document.getElementById("pingbar").textContent = "ping: OFFLINE";
+    if (manual) logLine("ping failed: " + e.message, "err");
+  });
+}
+
+function toggleSettings(){
+  var s = document.getElementById("settings");
+  s.style.display = (s.style.display === "block" ? "none" : "block");
+}
+
+function saveSettings(){
+  cfg = { owner: document.getElementById("s_owner").value.trim(),
+          repo: document.getElementById("s_repo").value.trim(),
+          token: document.getElementById("s_token").value.trim() || cfg.token };
+  lsSet("arena_gh", JSON.stringify(cfg));
+  logLine("settings saved", "ok");
+  ping(true);
+}
+
+init();
+</script>
+</body>
+</html>
