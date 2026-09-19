@@ -94,10 +94,13 @@ function init(){
     m.appendChild(b);
   });
   selectMap("1");
+  logLine("app v2 loaded", "");
   if (!cfg.owner || !cfg.repo || !cfg.token) {
     toggleSettings();
-    logLine("enter GitHub settings first", "err");
+    logLine("enter GitHub settings first (all 3 fields), then SAVE", "err");
   } else {
+    logLine("settings loaded: " + cfg.owner + "/" + cfg.repo + ", token " + cfg.token.length + " chars", "ok");
+    document.getElementById("s_token").placeholder = "saved — leave blank to keep";
     document.getElementById("s_owner").value = cfg.owner;
     document.getElementById("s_repo").value = cfg.repo;
     ping(false);
@@ -159,7 +162,15 @@ function ghHeaders(){
 
 function send(action){
   buzz(40);
-  if (!cfg.token) { logLine("no settings", "err"); return; }
+  var missing = [];
+  if (!cfg.owner) missing.push("owner");
+  if (!cfg.repo) missing.push("repo");
+  if (!cfg.token) missing.push("token");
+  if (missing.length) {
+    logLine("settings missing: " + missing.join(", ") + " — open SETTINGS, fill, SAVE", "err");
+    document.getElementById("settings").style.display = "block";
+    return;
+  }
   if (action === "disarm") setArmed(false);
   var ts = Date.now();
   seq += 1;
@@ -218,12 +229,18 @@ function toggleSettings(){
 }
 
 function saveSettings(){
+  var tok = document.getElementById("s_token").value.trim();
   cfg = { owner: document.getElementById("s_owner").value.trim(),
           repo: document.getElementById("s_repo").value.trim(),
-          token: document.getElementById("s_token").value.trim() || cfg.token };
+          token: tok || cfg.token || "" };
   lsSet("arena_gh", JSON.stringify(cfg));
-  logLine("settings saved", "ok");
-  ping(true);
+  var probe = lsGet("arena_gh");
+  logLine("saved: owner=" + (cfg.owner || "MISSING") + " repo=" + (cfg.repo || "MISSING") +
+          " token=" + (cfg.token ? cfg.token.length + " chars" : "MISSING") +
+          (probe ? "" : " (storage blocked — will not survive reload!)"),
+          (cfg.owner && cfg.repo && cfg.token) ? "ok" : "err");
+  if (cfg.token) document.getElementById("s_token").placeholder = "saved — leave blank to keep";
+  if (cfg.owner && cfg.repo && cfg.token) ping(true);
 }
 
 init();
