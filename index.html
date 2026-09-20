@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
-<title>Arena Buttons</title><!-- v2 -->
+<title>Arena Buttons</title>
 <style>
   :root { --bg:#0d1117; --panel:#161b22; --line:#30363d; --fg:#e6edf3; --dim:#8b949e;
           --green:#238636; --red:#b62324; --blue:#1f6feb; --amber:#9e6a03; }
@@ -41,7 +41,7 @@
 </style>
 </head>
 <body>
-<h1>C9 vs LYON &mdash; PoV C9 &mdash; 26SEP19 &mdash; SHADOW</h1>
+<h1 id="hdr">C9 vs LYON &mdash; PoV C9 &mdash; SHADOW</h1>
 <div class="banner" id="pingbar">ping: &ndash;</div>
 <div class="status" id="status">DISARMED</div>
 
@@ -70,13 +70,15 @@
   <label>GitHub owner (username)</label><input id="s_owner" autocapitalize="none">
   <label>Private data repo name</label><input id="s_repo" autocapitalize="none">
   <label>Fine-grained token (contents read/write)</label><input id="s_token" type="password" autocapitalize="none">
+  <label>Match stem (Kalshi event code, e.g. 26SEP191600C9LY)</label><input id="s_stem" autocapitalize="characters">
   <div class="row"><button class="small" onclick="saveSettings()">SAVE</button>
   <button class="small" onclick="ping(true)">TEST CONNECTION</button></div>
 </div>
 
 <script>
 "use strict";
-var STEM = "26SEP191600C9LY";
+var STEM = "26SEP191600C9LY";           // default; override in settings per event
+var ARM_TTL_S = 45;                      // armed baseline auto-expires
 var MAPS = ["1","2","3","4","5","S"];
 var sel = "1", armed = false, armedTs = null, seq = 0, pings = [], cfg = {};
 
@@ -94,7 +96,11 @@ function init(){
     m.appendChild(b);
   });
   selectMap("1");
-  logLine("app v2 loaded", "");
+  logLine("app v3 loaded (arm TTL " + ARM_TTL_S + "s)", "");
+  if (cfg.stem) {
+    document.getElementById("s_stem").value = cfg.stem;
+    document.getElementById("hdr").textContent = cfg.stem + " — SHADOW";
+  }
   if (!cfg.owner || !cfg.repo || !cfg.token) {
     toggleSettings();
     logLine("enter GitHub settings first (all 3 fields), then SAVE", "err");
@@ -120,12 +126,24 @@ function selectMap(x){
 function updateStatus(){
   var s = document.getElementById("status");
   if (armed) {
-    var dt = ((Date.now() - armedTs) / 1000).toFixed(0);
-    s.textContent = "ARMED " + (sel === "S" ? "SERIES" : "MAP " + sel) + "  t+" + dt + "s";
+    var dt = (Date.now() - armedTs) / 1000;
+    var left = Math.max(0, ARM_TTL_S - dt);
+    if (left <= 0) {
+      logLine("arm TTL expired (" + ARM_TTL_S + "s) — auto-disarm. RE-ARM for a fresh baseline", "err");
+      buzz([80, 40, 80]);
+      send("disarm", { auto_ttl: true });
+      return;
+    }
+    s.textContent = "ARMED " + (sel === "S" ? "SERIES" : "MAP " + sel) +
+                    "  t+" + dt.toFixed(0) + "s  ·  expires " + left.toFixed(0) + "s";
     s.className = "status armed";
+    s.style.background = dt < 15 ? "#1a2f1a" : (dt < 30 ? "#3a2f10" : "#3a1512");
+    s.style.borderColor = dt < 15 ? "#238636" : (dt < 30 ? "#9e6a03" : "#b62324");
+    s.style.color = dt < 15 ? "#3fb950" : (dt < 30 ? "#d29922" : "#f85149");
   } else {
     s.textContent = "DISARMED";
     s.className = "status";
+    s.style.background = ""; s.style.borderColor = ""; s.style.color = "";
   }
 }
 
@@ -160,7 +178,7 @@ function ghHeaders(){
            "Content-Type": "application/json" };
 }
 
-function send(action){
+function send(action, extra){
   buzz(40);
   var missing = [];
   if (!cfg.owner) missing.push("owner");
@@ -176,8 +194,10 @@ function send(action){
   seq += 1;
   var safe = action.replace("+", "p").replace("-", "m");
   var path = "events/" + ts + "_" + safe + "_" + sel + ".json";
-  var payload = { app_ts_ms: ts, action: action, map: sel, match: STEM,
+  var payload = { app_ts_ms: ts, action: action, map: sel,
+                  match: (cfg.stem || STEM),
                   armed_ts_ms: armedTs, seq: seq, pings_ms: pings.slice(-5) };
+  if (extra) for (var k in extra) payload[k] = extra[k];
   var body = JSON.stringify({ message: action + " " + sel,
     content: btoa(JSON.stringify(payload)) });
   var label = action + " " + (sel === "S" ? "SER" : "M" + sel);
@@ -232,7 +252,9 @@ function saveSettings(){
   var tok = document.getElementById("s_token").value.trim();
   cfg = { owner: document.getElementById("s_owner").value.trim(),
           repo: document.getElementById("s_repo").value.trim(),
-          token: tok || cfg.token || "" };
+          token: tok || cfg.token || "",
+          stem: (document.getElementById("s_stem").value.trim().toUpperCase() || STEM) };
+  document.getElementById("hdr").textContent = (cfg.stem || STEM) + " — SHADOW";
   lsSet("arena_gh", JSON.stringify(cfg));
   var probe = lsGet("arena_gh");
   logLine("saved: owner=" + (cfg.owner || "MISSING") + " repo=" + (cfg.repo || "MISSING") +
